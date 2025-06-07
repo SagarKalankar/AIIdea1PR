@@ -28,7 +28,7 @@ jobs:
 
     - name: Update PR title and body
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         NEW_TITLE: "🔧 Auto-Updated PR Title"
         NEW_BODY: |
