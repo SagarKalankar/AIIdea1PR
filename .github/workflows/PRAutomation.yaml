@@ -1,76 +1,58 @@
-name: PR Handler with ChatGPT
+- name: Generate PR title and body using ChatGPT
+  id: chatgpt
+  env:
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  run: |
+    # Limit the diff size to avoid token overflow
+    CHANGES=$(head -c 5000 changes.txt | sed 's/"/\\"/g')
 
-on:
-  pull_request:
-    types: [opened]
+    echo "📄 Sending the following to ChatGPT:"
+    echo "$CHANGES"
 
-jobs:
-  handle-pr:
-    runs-on: ubuntu-latest
+    JSON_PAYLOAD=$(cat <<EOF
+{
+  "model": "gpt-4",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that writes concise and clear GitHub pull request titles and descriptions."
+    },
+    {
+      "role": "user",
+      "content": "Generate a clear and professional pull request title and description based on the following code changes:\n\n$CHANGES"
+    }
+  ]
+}
+EOF
+)
 
-    steps:
-    - name: Checkout the PR branch
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+    RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
+      -H "Authorization: Bearer $OPENAI_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d "$JSON_PAYLOAD")
 
-    - name: Fetch PR base and head branches
-      run: |
-        git fetch origin ${{ github.event.pull_request.base.ref }}
-        git fetch origin ${{ github.event.pull_request.head.ref }}
+    echo "🔍 OpenAI Response:"
+    echo "$RESPONSE" | jq .
 
-    - name: Save PR Changes to changes.txt
-      run: |
-        git diff origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }} > changes.txt
+    GENERATED=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
 
-    - name: Generate PR title and body using ChatGPT
-      id: chatgpt
-      env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: |
-        CHANGES=$(cat changes.txt)
+    # Defensive: if nothing is returned, fail early
+    if [[ -z "$GENERATED" || "$GENERATED" == "null" ]]; then
+      echo "❌ No content returned from ChatGPT"
+      exit 1
+    fi
 
-        JSON_PAYLOAD=$(jq -n \
-          --arg model "gpt-4" \
-          --arg content "Generate a concise and professional GitHub pull request title and description based on the following code changes:\n\n$CHANGES" \
-          '{
-            model: $model,
-            messages: [
-              { "role": "system", "content": "You are a helpful assistant that writes concise and clear pull request titles and descriptions." },
-              { "role": "user", "content": $content }
-            ]
-          }')
+    TITLE=$(echo "$GENERATED" | head -n 1 | tr -d '\r')
+    BODY=$(echo "$GENERATED" | tail -n +2)
 
-        RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer $OPENAI_API_KEY" \
-          -d "$JSON_PAYLOAD")
+    echo "🎯 Title: $TITLE"
+    echo "📝 Body:"
+    echo "$BODY"
 
-        echo "$RESPONSE" > response.json
+    echo "title<<EOF" >> $GITHUB_OUTPUT
+    echo "$TITLE" >> $GITHUB_OUTPUT
+    echo "EOF" >> $GITHUB_OUTPUT
 
-        GENERATED=$(jq -r '.choices[0].message.content' response.json)
-
-        TITLE=$(echo "$GENERATED" | head -n 1)
-        BODY=$(echo "$GENERATED" | tail -n +2)
-
-        echo "title<<EOF" >> $GITHUB_OUTPUT
-        echo "$TITLE" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
-        echo "body<<EOF" >> $GITHUB_OUTPUT
-        echo "$BODY" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
-    - name: Update PR title and body using gh CLI
-      env:
-        GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-      run: |
-        echo "Using title:"
-        echo "${{ steps.chatgpt.outputs.title }}"
-        echo "Using body:"
-        echo "${{ steps.chatgpt.outputs.body }}"
-    
-        gh pr edit "$PR_NUMBER" \
-          --title "${{ steps.chatgpt.outputs.title }}" \
-          --body "${{ steps.chatgpt.outputs.body }}"
+    echo "body<<EOF" >> $GITHUB_OUTPUT
+    echo "$BODY" >> $GITHUB_OUTPUT
+    echo "EOF" >> $GITHUB_OUTPUT
