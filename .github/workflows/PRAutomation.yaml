@@ -1,4 +1,4 @@
-name: PR Handler Workflow
+name: PR Handler with ChatGPT
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ jobs:
     - name: Checkout the PR branch
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0 # Full history for accurate diff
+        fetch-depth: 0
 
     - name: Fetch PR base and head branches
       run: |
@@ -23,18 +23,49 @@ jobs:
       run: |
         git diff origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }} > changes.txt
 
-    - name: Show contents of changes.txt
-      run: cat changes.txt
+    - name: Generate PR title and body using ChatGPT
+      id: chatgpt
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        CHANGES=$(cat changes.txt)
 
-    - name: Update PR title and body
+        JSON_PAYLOAD=$(jq -n \
+          --arg model "gpt-4" \
+          --arg content "Generate a concise and professional GitHub pull request title and description based on the following code changes:\n\n$CHANGES" \
+          '{
+            model: $model,
+            messages: [
+              { "role": "system", "content": "You are a helpful assistant that writes concise and clear pull request titles and descriptions." },
+              { "role": "user", "content": $content }
+            ]
+          }')
+
+        RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $OPENAI_API_KEY" \
+          -d "$JSON_PAYLOAD")
+
+        echo "$RESPONSE" > response.json
+
+        GENERATED=$(jq -r '.choices[0].message.content' response.json)
+
+        TITLE=$(echo "$GENERATED" | head -n 1)
+        BODY=$(echo "$GENERATED" | tail -n +2)
+
+        echo "title<<EOF" >> $GITHUB_OUTPUT
+        echo "$TITLE" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        echo "body<<EOF" >> $GITHUB_OUTPUT
+        echo "$BODY" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Update PR title and body using gh CLI
       env:
         GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-        NEW_TITLE: "🔧 Auto-Updated PR Title"
-        NEW_BODY: |
-          ### 🔄 Auto-Updated PR Description
-
-          This description has been updated by a GitHub Actions workflow.
       run: |
-        gh auth setup-git
-        gh pr edit "$PR_NUMBER" --title "$NEW_TITLE" --body "$NEW_BODY"
+        gh pr edit "$PR_NUMBER" \
+          --title "${{ steps.chatgpt.outputs.title }}" \
+          --body "${{ steps.chatgpt.outputs.body }}"
