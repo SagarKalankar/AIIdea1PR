@@ -66,6 +66,11 @@ jobs:
         GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
+        echo "Using title:"
+        echo "${{ steps.chatgpt.outputs.title }}"
+        echo "Using body:"
+        echo "${{ steps.chatgpt.outputs.body }}"
+    
         gh pr edit "$PR_NUMBER" \
           --title "${{ steps.chatgpt.outputs.title }}" \
           --body "${{ steps.chatgpt.outputs.body }}"
