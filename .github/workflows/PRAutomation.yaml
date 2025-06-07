@@ -2,32 +2,39 @@ name: PR Handler Workflow
 
 on:
   pull_request:
-    types: [opened] # Trigger only when PR is created
+    types: [opened]
 
 jobs:
   handle-pr:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout PR Code
+    - name: Checkout the PR branch
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Full history for accurate diff
 
-    - name: Save PR Changes to File
+    - name: Fetch PR base and head branches
       run: |
         git fetch origin ${{ github.event.pull_request.base.ref }}
-        git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > changes.txt
+        git fetch origin ${{ github.event.pull_request.head.ref }}
 
-    - name: Print Changes File
+    - name: Save PR Changes to changes.txt
+      run: |
+        git diff origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }} > changes.txt
+
+    - name: Show contents of changes.txt
       run: cat changes.txt
 
-    - name: Update PR Title and Description
+    - name: Update PR title and body
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-        NEW_TITLE: "Updated Automatically by Workflow"
+        NEW_TITLE: "🔧 Auto-Updated PR Title"
         NEW_BODY: |
-          ### 🔄 PR Updated by Workflow
+          ### 🔄 Auto-Updated PR Description
 
-          This pull request title and description were replaced by a GitHub Actions workflow for standardization.
+          This description has been updated by a GitHub Actions workflow.
       run: |
+        gh auth setup-git
         gh pr edit "$PR_NUMBER" --title "$NEW_TITLE" --body "$NEW_BODY"
