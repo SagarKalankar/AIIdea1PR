@@ -1,15 +1,36 @@
-- name: Generate PR title and body using ChatGPT
-  id: chatgpt
-  env:
-    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  run: |
-    # Limit the diff size to avoid token overflow
-    CHANGES=$(head -c 5000 changes.txt | sed 's/"/\\"/g')
+name: PR Handler with ChatGPT
 
-    echo "📄 Sending the following to ChatGPT:"
-    echo "$CHANGES"
+on:
+  pull_request:
+    types: [opened]
 
-    JSON_PAYLOAD=$(cat <<EOF
+jobs:
+  handle-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR base and head branches
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git fetch origin ${{ github.event.pull_request.head.ref }}
+
+      - name: Save PR Changes to changes.txt
+        run: |
+          git diff origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }} > changes.txt
+
+      - name: Generate PR title and body using ChatGPT
+        id: chatgpt
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          CHANGES=$(head -c 5000 changes.txt | sed 's/"/\\"/g')
+
+          JSON_PAYLOAD=$(cat <<EOF
 {
   "model": "gpt-4",
   "messages": [
@@ -26,33 +47,36 @@
 EOF
 )
 
-    RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
-      -H "Authorization: Bearer $OPENAI_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d "$JSON_PAYLOAD")
+          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD")
 
-    echo "🔍 OpenAI Response:"
-    echo "$RESPONSE" | jq .
+          echo "$RESPONSE" | jq .
 
-    GENERATED=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
+          GENERATED=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
 
-    # Defensive: if nothing is returned, fail early
-    if [[ -z "$GENERATED" || "$GENERATED" == "null" ]]; then
-      echo "❌ No content returned from ChatGPT"
-      exit 1
-    fi
+          if [[ -z "$GENERATED" || "$GENERATED" == "null" ]]; then
+            echo "❌ No content returned from ChatGPT"
+            exit 1
+          fi
 
-    TITLE=$(echo "$GENERATED" | head -n 1 | tr -d '\r')
-    BODY=$(echo "$GENERATED" | tail -n +2)
+          TITLE=$(echo "$GENERATED" | head -n 1 | tr -d '\r')
+          BODY=$(echo "$GENERATED" | tail -n +2)
 
-    echo "🎯 Title: $TITLE"
-    echo "📝 Body:"
-    echo "$BODY"
+          echo "title<<EOF" >> $GITHUB_OUTPUT
+          echo "$TITLE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-    echo "title<<EOF" >> $GITHUB_OUTPUT
-    echo "$TITLE" >> $GITHUB_OUTPUT
-    echo "EOF" >> $GITHUB_OUTPUT
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-    echo "body<<EOF" >> $GITHUB_OUTPUT
-    echo "$BODY" >> $GITHUB_OUTPUT
-    echo "EOF" >> $GITHUB_OUTPUT
+      - name: Update PR title and body using gh CLI
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr edit "$PR_NUMBER" \
+            --title "${{ steps.chatgpt.outputs.title }}" \
+            --body "${{ steps.chatgpt.outputs.body }}"
