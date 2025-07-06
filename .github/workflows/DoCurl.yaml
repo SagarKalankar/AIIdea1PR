@@ -1,0 +1,16 @@
+name: Call Azure OpenAI API
+
+on:
+  workflow_dispatch:  # Allows you to manually trigger this workflow
+
+jobs:
+  call-openai:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Make curl request to Azure OpenAI API
+        run: |
+          curl -X POST "https://cdktf-apim.azure-api.net/openai/deployments/gpt-35-turbo/chat/completions?api-version=2023-07-01-preview" \
+          -H "Content-Type: application/json" \
+          -H "api-key: ${{ secrets.OPENAI_API_KEY }}" \
+          -d "{\"messages\": [{\"role\": \"user\", \"content\": \"What is capital of India?\"}], \"temperature\": 0.7}"
